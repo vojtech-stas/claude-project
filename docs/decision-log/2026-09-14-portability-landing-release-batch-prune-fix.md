@@ -10,7 +10,7 @@
 - [ ] Land it but leave the escalation open until the work is merged and verified — rejected.
 - [ ] Hold until the operator has read the PRD themselves — rejected.
 
-The pair was re-authored from scratch under a fresh round counter, as authorised on 2 September, and both critics returned APPROVE in the same round with nothing outstanding — the first time this pair has passed. The escalation (#1325) was deliberately left open after that pass rather than closed by the run that earned it: landing the work would have resolved a human-escalation item by doing the thing it stopped, which is the outcome the escalation surface exists to prevent. The answer is what converts an approved document into a landing.
+The pair was re-authored from scratch under a fresh round counter, as authorised on 7 September, and both critics returned APPROVE in the same round with nothing outstanding — the first time this pair has passed. The escalation (#1325) was deliberately left open after that pass rather than closed by the run that earned it: landing the work would have resolved a human-escalation item by doing the thing it stopped, which is the outcome the escalation surface exists to prevent. The answer is what converts an approved document into a landing.
 
 **D293 — the 22 changes waiting to be released.**
 
