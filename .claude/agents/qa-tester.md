@@ -494,19 +494,21 @@ In production-verify mode, **implementer-supplied proof artifacts are inadmissib
 ### Artifact-path requirement — ROOT-absolute only (ADR-0061 D5)
 
 Write proof artifacts (screenshots, output excerpts saved to disk) ONLY under:
-- `F:\project_claude\.claude\logs\review-shots\` (gitignored log directory)
-- `F:\project_claude\qa-proof\<prd-num>\` (tracked qa-proof directory)
+- the gitignored review-shots log directory, ROOT-absolute (`<repo-root>/.claude/logs/review-shots/`)
+- the repo-root-derived `qa-proof/<prd-num>/` directory (tracked)
 
 **Never write to worktree-relative paths.** Worktrees are auto-cleaned after dispatch; a proof artifact at a worktree-relative path vanishes with the worktree — the exact class that produced PASS verdicts whose ARTIFACTS paths no longer existed (issue #777). The ROOT-absolute `qa-proof/` and `.claude/logs/review-shots/` paths survive auto-cleanup.
 
-When computing `PROOF_DIR` in Playwright scripts, use the ROOT-absolute form:
+When computing either directory in Playwright scripts, derive both from the same ROOT-absolute base:
 ```python
 import os
 REPO_ROOT = os.environ.get("CLAUDE_PROJECT_DIR", "")  # set by Claude Code
 PROOF_DIR = os.path.join(REPO_ROOT, "qa-proof", "<prd-num>")
+REVIEW_SHOTS_DIR = os.path.join(REPO_ROOT, ".claude", "logs", "review-shots")
 os.makedirs(PROOF_DIR, exist_ok=True)
+os.makedirs(REVIEW_SHOTS_DIR, exist_ok=True)
 ```
-If `CLAUDE_PROJECT_DIR` is not set, derive from `git rev-parse --show-toplevel` before writing any script. Per ADR-0061 D5, per issue #777.
+If `CLAUDE_PROJECT_DIR` is not set, derive `REPO_ROOT` from `git rev-parse --show-toplevel` before writing any script. Per ADR-0061 D5, per issue #777.
 
 ### Output shape (production-verify mode)
 
@@ -546,7 +548,7 @@ Validation failures invalidate the proof. Per ADR-0061 D2 (bootstrap-mode: binds
 `RESULT: INVALID_INPUT` on missing inputs, mode ambiguity, or route cannot be determined.
 `PRODUCTION_VERIFY: PROVISIONAL` when the table-mandated route's tooling is unavailable — never a weaker-route PASS. The calling orchestrator routes PROVISIONAL to the `needs-human-check` queue (ADR-0040 D2). On PROVISIONAL, `RESULT` is also `FAIL` (gate not passed). Do NOT set `RESULT: SUCCESS` on PROVISIONAL.
 
-The orchestrator (`/ship`) reads `PRODUCTION_VERIFY: PASS|FAIL` and enforces the block (per ADR-0037 D3 — the blocking decision belongs to the orchestrator, not to qa-tester). After qa-tester returns the proof path in `ARTIFACTS`, the orchestrator commits the image to `qa-proof/<prd-num>/` on the PR branch and posts a PR comment embedding it via its raw URL (ADR-0049 D3, preserved), then records the verdict via `python tools/pipe/qa-verify --verdict <PRODUCTION_VERIFY value> --route <ROUTE value>` (repoint target, PRD #1075 criterion 1 rider / slice #1086 — this verdict was previously unrecorded outside qa-tester's own trailer).
+The orchestrator (`/ship`) reads `PRODUCTION_VERIFY: PASS|FAIL` and enforces the block (per ADR-0037 D3 — the blocking decision belongs to the orchestrator, not to qa-tester). After qa-tester returns the proof path in `ARTIFACTS`, the orchestrator commits the image to `qa-proof/<prd-num>/` on the PR branch and posts a PR comment embedding it via its raw URL (ADR-0049 D3, preserved — scope formalized by ADR-0084), then records the verdict via `python tools/pipe/qa-verify --verdict <PRODUCTION_VERIFY value> --route <ROUTE value>` (repoint target, PRD #1075 criterion 1 rider / slice #1086 — this verdict was previously unrecorded outside qa-tester's own trailer).
 
 ### Tool boundaries (production-verify mode)
 
@@ -563,7 +565,7 @@ No `gh issue create` in production-verify mode (no PROVISIONAL_PASS concept here
 - [ADR-0020](../../decisions/0020-qa-automation-writer-executor.md) — your primary spec for bash-mode. D1 (writer/executor split), D2 (LLM-extract + EXTRACT_FAILED), D3 (sequential walk + tool boundaries — D3 tool-boundary clause narrowed by ADR-0025 D1 to add browser tools for ui-mode; all other ADR-0020 decisions preserved), D4 (plan persisted as PRD comment), D5 (auto-close on all-PASS + all-judgment-ACCEPT), D9 (generator role, critic-parsimony honored), D10 (refines ADR-0003 D4 terminal human checkpoint).
 - [ADR-0025](../../decisions/0025-qa-tester-ui-mode-playwright.md) — primary spec for ui-mode structure. D1 (dual-mode contract + tool-boundary narrowing of ADR-0020 D3), D2 (driver choice — **superseded by ADR-0050 D1**; headless Playwright/Chrome replaces Claude_Preview), D3 (LLM-judges results — PASS/PROVISIONAL_PASS/FAIL verdict shape), D4 (PROVISIONAL_PASS auto-captures + `/promote-to-backlog` inline), D5 (dogfood self-test on every invocation; tool calls updated per ADR-0050 D3), D6 (critic-parsimony honored — no new critic), D7 (bootstrap.sh Playwright library install — **reinstated** per ADR-0050 D1: `pip install playwright` only; no chromium binary), D8 (bootstrap-mode forward-only), D9 (cascade-doc updates).
 - [ADR-0050](../../decisions/0050-headless-playwright-browser-driver.md) — driver swap spec. D1 (headless Playwright/Chrome replaces Claude_Preview MCP, supersedes ADR-0049 D1/D2); D2 (tool-boundary update — browser route via Bash-executed Playwright Python scripts; Claude_Preview MCP tools dropped); D3 (dogfood self-test updated to headless Playwright); D4 (ADR-0049 D4 fallback chain obsoleted — headless has no hidden-window timeout); D5 (parsimony + caps honored, no new critic, qa-tester stays a generator).
-- [ADR-0049](../../decisions/0049-claude-preview-browser-driver.md) — **superseded** by ADR-0050 D1/D2 (Claude_Preview driver choice + tool-boundary). D3 (proof-posting: orchestrator commits proof, qa-tester returns the path) is PRESERVED. D4 (screenshot fallback chain) is OBSOLETED. D5 (parsimony) is PRESERVED.
+- [ADR-0049](../../decisions/0049-claude-preview-browser-driver.md) — **superseded** by ADR-0050 D1/D2 (Claude_Preview driver choice + tool-boundary). D3 (proof-posting: orchestrator commits proof, qa-tester returns the path) is PRESERVED (scope formalized by ADR-0084). D4 (screenshot fallback chain) is OBSOLETED. D5 (parsimony) is PRESERVED.
 - [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — canonical GENERATOR trailer shape; per-agent extensions for both modes named here (bash-mode: PASS/FAIL/JUDGMENT/EXTRACT_FAILED_COUNT; ui-mode: UI_PASS/UI_PROVISIONAL_PASS/UI_FAIL_COUNT + UI_CAPTURED_ISSUES).
 - [ADR-0024](../../decisions/0024-root-cause-workflow-capture-discipline.md) D1 + D3 — CLAUDE.md cross-cutting rule #13 root-cause-capture discipline; ui-mode PROVISIONAL_PASS captures follow the 3-part body shape.
 - [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in this file; superseded entirely by ADR-0032.

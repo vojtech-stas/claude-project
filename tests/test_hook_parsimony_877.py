@@ -238,7 +238,7 @@ class TestSubagentEditNudge(unittest.TestCase):
             **_base_payload("test-877-nudge"),
             "hook_event_name": "PostToolUse",
             "tool_name": "Edit",
-            "tool_input": {"file_path": "/f/project_claude/.claude/agents/reviewer.md"},
+            "tool_input": {"file_path": "/PROJECT_ROOT/.claude/agents/reviewer.md"},
             "tool_response": "ok",
         }
         with tempfile.TemporaryDirectory() as tmp:
@@ -263,7 +263,7 @@ class TestSubagentEditNudge(unittest.TestCase):
             **_base_payload("test-877-nudge"),
             "hook_event_name": "PostToolUse",
             "tool_name": "Edit",
-            "tool_input": {"file_path": "/f/project_claude/.claude/agents/implementer.md"},
+            "tool_input": {"file_path": "/PROJECT_ROOT/.claude/agents/implementer.md"},
             "tool_response": "ok",
         }
         with tempfile.TemporaryDirectory() as tmp:
@@ -303,7 +303,7 @@ class TestSubagentEditNudge(unittest.TestCase):
             **_base_payload("test-877-nonnudge"),
             "hook_event_name": "PostToolUse",
             "tool_name": "Edit",
-            "tool_input": {"file_path": "/f/project_claude/tools/ci-checks.sh"},
+            "tool_input": {"file_path": "/PROJECT_ROOT/tools/ci-checks.sh"},
             "tool_response": "ok",
         }
         with tempfile.TemporaryDirectory() as tmp:

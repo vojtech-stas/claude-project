@@ -377,7 +377,7 @@ This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already 
    - Surface the proof: print `PROOF:` + `ROUTE:` + `ASSERTIONS_CHECKED:` from qa-tester's trailer.
    - Record the verdict via the sanctioned wrapper (repoint target, PRD #1075 criterion 1 rider / slice #1086 — previously unrecorded outside qa-tester's own trailer): `python tools/pipe/qa-verify --verdict PASS --route <ROUTE value> --pr <pr-number> --prd <PRD_NUMBER>`.
    - Log: `"Production gate PASS (round <N>): feature verified."`
-   - **Proof-posting (per ADR-0049 D3 — orchestrator owns commit + comment; qa-tester stays read-only):**
+   - **Proof-posting (per ADR-0049 D3 — orchestrator owns commit + comment; qa-tester stays read-only; scope formalized by ADR-0084):**
      If qa-tester's `ARTIFACTS` trailer contains a proof image path (a `.png` or `.jpg` file), commit it to the PR branch and post a PR comment so the reviewer and user see the rendered proof inline:
      ```bash
      # <prd-num>  = PRD issue number (from stage 2's captured PRD number)

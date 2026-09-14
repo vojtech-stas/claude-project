@@ -1133,6 +1133,202 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 25: Portability scrub (ADR-0084 D1)
+#
+# Repository is public. Tracked text must not carry machine-local absolute
+# path detail: Class A (an OS-account segment inside a Users path) or
+# Class B (a local clone root, either the native drive-letter form or the
+# MSYS/Git-Bash mount-form Git Bash substitutes for it).
+#
+# Scope: every tracked file (git ls-files --cached), tree-wide, mirroring
+#        CHECK 13's actual code (not its own stale diff-scoped comments —
+#        see #1404). Excludes qa-proof/** (evidence), decisions/** (immutable
+#        ADR archive), and tools/portability-allowlist.txt itself (excluded
+#        by construction so it cannot trip the check it feeds).
+# Allowlist: tools/portability-allowlist.txt — path+literal-substring
+#        anchored, never line-number-anchored, never a whole-file exemption.
+# Per-check aggregation: FAIL_COUNT incremented on FAIL only.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 25: portability scrub (ADR-0084 D1) ---"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 25 — python3 not available (soft-degrade)"
+elif ! command -v git > /dev/null 2>&1; then
+    echo "SKIP: CHECK 25 — git not available (soft-degrade)"
+else
+python3 - << 'PORTABILITY_PYEOF'
+import re, sys, os, subprocess
+
+# Class A/B patterns (ADR-0084 D1), exactly as measured and shipped.
+CLASS_A = re.compile(r'\b[Uu]sers[\\/][A-Za-z_][A-Za-z0-9_.-]{2,}')
+CLASS_B_ARM1 = re.compile(r'\b[A-Za-z]:[\\/][A-Za-z_][A-Za-z0-9_ .-]{2,}[\\/]')
+CLASS_B_ARM2 = re.compile(r'(^|[^A-Za-z0-9_])/[A-Za-z]/[A-Za-z_][A-Za-z0-9_.-]{2,}/')
+_PATTERNS = (CLASS_A, CLASS_B_ARM1, CLASS_B_ARM2)
+
+EXCLUDE_PREFIXES = ('qa-proof/', 'decisions/')
+ALLOWLIST_PATH = 'tools/portability-allowlist.txt'
+EXCLUDE_FILES = {ALLOWLIST_PATH}
+
+# Load allowlist: path|literal substring|reason, path+substring anchored.
+_allowlist = {}
+if os.path.isfile(ALLOWLIST_PATH):
+    with open(ALLOWLIST_PATH, 'r', encoding='utf-8', errors='replace') as _f:
+        for _line in _f:
+            _line = _line.rstrip('\n')
+            if not _line.strip() or _line.lstrip().startswith('#'):
+                continue
+            _parts = _line.split('|', 2)
+            if len(_parts) < 2:
+                continue
+            _path, _substr = _parts[0], _parts[1]
+            _allowlist.setdefault(_path, []).append(_substr)
+
+def is_allowlisted(filepath, line_text):
+    for substr in _allowlist.get(filepath, []):
+        if substr in line_text:
+            return True
+    return False
+
+
+try:
+    result = subprocess.run(
+        ['git', 'ls-files', '--cached'],
+        capture_output=True, text=True, encoding='utf-8', errors='replace'
+    )
+    tracked_files = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+except Exception as e:
+    print(f'SKIP: CHECK 25 — git ls-files failed: {e}')
+    sys.exit(0)
+
+subject_files = [
+    f for f in tracked_files
+    if not f.startswith(EXCLUDE_PREFIXES) and f not in EXCLUDE_FILES
+    and os.path.isfile(f)
+]
+
+_BINARY_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf',
+                '.zip', '.tar', '.gz', '.whl', '.pyc', '.so', '.dll'}
+
+violations = []
+for filepath in subject_files:
+    _, ext = os.path.splitext(filepath.lower())
+    if ext in _BINARY_EXTS:
+        continue
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            for lineno, line in enumerate(f, 1):
+                line_stripped = line.rstrip('\n')
+                if not any(pat.search(line_stripped) for pat in _PATTERNS):
+                    continue
+                if is_allowlisted(filepath, line_stripped):
+                    continue
+                violations.append((filepath, lineno, line_stripped[:120]))
+    except (OSError, UnicodeDecodeError):
+        continue
+
+if violations:
+    for filepath, lineno, line in violations[:10]:
+        print(
+            f'FAIL: CHECK 25 — portability scrub: {filepath}:{lineno}: {line[:80]}',
+            file=sys.stderr
+        )
+    if len(violations) > 10:
+        print(f'FAIL: CHECK 25 — ... and {len(violations) - 10} more violation(s)',
+              file=sys.stderr)
+    print(
+        'NOTE: remove the machine-local path detail, or if this line documents '
+        'the hazard rather than leaking a real path, add a path+literal-substring '
+        'entry to tools/portability-allowlist.txt with a reason comment '
+        '(ADR-0084 D1).',
+        file=sys.stderr
+    )
+    sys.exit(1)
+else:
+    print(f'PASS: CHECK 25 — portability scrub: no Class A/B path leaks in '
+          f'{len(subject_files)} tracked file(s)')
+    sys.exit(0)
+PORTABILITY_PYEOF
+CHECK25_EXIT=$?
+if [ "$CHECK25_EXIT" -ne 0 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+fi  # end python3/git availability check
+
+# ---------------------------------------------------------------------------
+# CHECK 26: qa-proof/ shape (ADR-0084 D2)
+#
+# The sanctioned shape for tracked files under qa-proof/ is
+# qa-proof/<prd-num>/** where <prd-num> is a bare numeric segment
+# (ADR-0049 D3's own examples). Nine pre-existing files predate this
+# definition and are grandfathered by name (D2) — no other exceptions.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 26: qa-proof/ shape (ADR-0084 D2) ---"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 26 — python3 not available (soft-degrade)"
+elif ! command -v git > /dev/null 2>&1; then
+    echo "SKIP: CHECK 26 — git not available (soft-degrade)"
+else
+python3 - << 'QAPROOFSHAPE_PYEOF'
+import re, sys, subprocess
+
+SHAPE_RE = re.compile(r'^qa-proof/[0-9]+/.+')
+
+GRANDFATHERED = {
+    'qa-proof/design/judges-and-verdicts.md',
+    'qa-proof/design/winner-architecture.md',
+    'qa-proof/design/winner-staging.md',
+    'qa-proof/forensics/code-health-auditor.md',
+    'qa-proof/forensics/event-pipeline-autopsy.md',
+    'qa-proof/forensics/github-trail-assessor.md',
+    'qa-proof/forensics/process-retrospective.md',
+    'qa-proof/forensics/purpose-archaeologist.md',
+    'qa-proof/forensics/topology-ontologist.md',
+}
+
+try:
+    result = subprocess.run(
+        ['git', 'ls-files', '--cached'],
+        capture_output=True, text=True, encoding='utf-8', errors='replace'
+    )
+    tracked_files = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+except Exception as e:
+    print(f'SKIP: CHECK 26 — git ls-files failed: {e}')
+    sys.exit(0)
+
+qa_proof_files = [f for f in tracked_files if f.startswith('qa-proof/')]
+
+violations = [
+    f for f in qa_proof_files
+    if not SHAPE_RE.match(f) and f not in GRANDFATHERED
+]
+
+if violations:
+    for f in violations[:10]:
+        print(f'FAIL: CHECK 26 — qa-proof/ shape: {f} does not match '
+              f'qa-proof/<prd-num>/** and is not on the grandfather list',
+              file=sys.stderr)
+    if len(violations) > 10:
+        print(f'FAIL: CHECK 26 — ... and {len(violations) - 10} more violation(s)',
+              file=sys.stderr)
+    print(
+        'NOTE: move the file under qa-proof/<prd-num>/, or if this is a '
+        'pre-existing file that predates ADR-0084 D2, it must be added to '
+        'the fixed grandfather list by a superseding ADR — CHECK 26 does '
+        'not grow its own grandfather list.',
+        file=sys.stderr
+    )
+    sys.exit(1)
+else:
+    print(f'PASS: CHECK 26 — qa-proof/ shape: {len(qa_proof_files)} tracked '
+          f'file(s) all conform to qa-proof/<prd-num>/** or are grandfathered')
+    sys.exit(0)
+QAPROOFSHAPE_PYEOF
+CHECK26_EXIT=$?
+if [ "$CHECK26_EXIT" -ne 0 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+fi  # end python3/git availability check
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
