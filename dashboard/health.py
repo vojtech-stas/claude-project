@@ -2829,9 +2829,13 @@ _ROUTE_TABLE = [
 
 # Proof tokens per route class (ADR-0061 D1 / rule #20).
 # These regexes are searched over the PR body + comment trail.
+# ADR-0083 D4(a): the hook-fire class is evidence-shaped — matched patterns are
+# shapes only a real beacon record or verification transcript produces (a
+# beacon's own key/value structure, an exit code with a digit), never the
+# ordinary prose used to refer to that evidence (a filename, a route name).
 _PROOF_TOKENS: dict[str, list[str]] = {
     "browser":      [r'\.png\b', r'inner_text:', r'screenshot'],
-    "hook-fire":    [r'exit=', r'hook-fire', r'HOOK-FIRE'],
+    "hook-fire":    [r'"status"\s*:\s*"(ok|ERROR)"', r'"hook"\s*:\s*"', r'exit=\d'],
     "command-run":  [r'exit=', r'exit code', r'exit\s*0'],
     "static":       [r'grep count=', r'grep -c', r'grep\s+\d+', r'count=\d'],
 }
@@ -2856,15 +2860,23 @@ def _classify_route(changed_files: list[str]) -> set[str]:
     return classes
 
 
-def _pr_has_proof_token(pr_body: str, comments: list[str], route_classes: set[str]) -> bool:
-    """Return True if ANY comment or pr_body contains a proof token for ANY route class."""
+def _pr_has_proof_token(pr_body: str, comments: list[str], route_classes: set[str]) -> set[str]:
+    """Return the subset of route_classes with NO matching proof token.
+
+    Conjunctive per ADR-0061 D1 ("takes the union of proof classes") and
+    ADR-0083 D4(b): a PR is compliant only when EVERY class in the route union
+    has a matching token, not just one. An empty return set means the PR is
+    fully compliant; a non-empty one names exactly which classes are missing
+    (ADR-0083 D4(c) — the detail must say what was missed, not just that
+    something was).
+    """
     search_text = " ".join([pr_body] + comments)
+    unsatisfied: set[str] = set()
     for cls in route_classes:
         tokens = _PROOF_TOKENS.get(cls, [])
-        for tok in tokens:
-            if re.search(tok, search_text, re.IGNORECASE):
-                return True
-    return False
+        if not any(re.search(tok, search_text, re.IGNORECASE) for tok in tokens):
+            unsatisfied.add(cls)
+    return unsatisfied
 
 
 def check_blind_dispatch_rate() -> dict:
@@ -3090,21 +3102,38 @@ def check_proof_presence() -> dict:
     and rolling rate. Grandfathers PRs <= _PROOF_PRESENCE_BOOTSTRAP_PR.
 
     Reuses collector's fetch caching (get_trail + get_recent_merged_prs).
-    """
-    try:
-        _insert_dashboard_sys_path()
-        from collector import get_recent_merged_prs  # noqa: PLC0415
-        from collector import _run_gh  # noqa: PLC0415
-    except Exception as exc:
-        return {"id": "PROOF-PRESENCE", "result": "WARN",
-                "detail": f"collector import failed: {exc}", "rate": None, "window": 0}
 
+    Test injection: set env var _PROOF_PRESENCE_PR_OVERRIDE to a JSON list of
+    full PR dicts (keys: number, headRefName, labels, files, body, comments).
+    When set, both the recent-PR listing and the per-PR gh fetch are bypassed
+    (mirrors check_proof_integrity's _PROOF_INTEGRITY_PR_OVERRIDE — ADR-0083 D4
+    Enforcement leg 3 needs this to assert check_proof_presence's detail
+    without live network).
+    """
     import json as _json
 
-    prs = get_recent_merged_prs(limit=_PROOF_PRESENCE_WINDOW + 5)
+    override_raw = os.environ.get("_PROOF_PRESENCE_PR_OVERRIDE", "")
+    _run_gh = None
+    if override_raw:
+        try:
+            prs_all = _json.loads(override_raw)
+        except Exception as exc:
+            return {"id": "PROOF-PRESENCE", "result": "WARN",
+                    "detail": f"_PROOF_PRESENCE_PR_OVERRIDE parse error: {exc}",
+                    "rate": None, "window": 0}
+    else:
+        try:
+            _insert_dashboard_sys_path()
+            from collector import get_recent_merged_prs  # noqa: PLC0415
+            from collector import _run_gh  # noqa: PLC0415
+        except Exception as exc:
+            return {"id": "PROOF-PRESENCE", "result": "WARN",
+                    "detail": f"collector import failed: {exc}", "rate": None, "window": 0}
+        prs_all = get_recent_merged_prs(limit=_PROOF_PRESENCE_WINDOW + 5)
+
     # Filter trivial-lane PRs (heuristic: trivial in headRef or body)
     non_trivial = []
-    for pr in prs:
+    for pr in prs_all:
         ref = pr.get("headRefName", "")
         labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
         if "trivial" in labels or ref.startswith("hotfix/"):
@@ -3123,18 +3152,22 @@ def check_proof_presence() -> dict:
     without_proof = []
     for pr in non_trivial:
         pr_num = pr.get("number", 0)
-        # Fetch changed files
-        stdout, _ = _run_gh(["pr", "view", str(pr_num), "--json",
-                              "files,body,comments"], timeout=20)
-        if stdout is None:
-            # Cannot verify — count as present (honest: missing data != missing proof)
-            with_proof += 1
-            continue
-        try:
-            pr_data = _json.loads(stdout)
-        except Exception:
-            with_proof += 1
-            continue
+        if override_raw:
+            # Override PRs already carry files/body/comments in full.
+            pr_data = pr
+        else:
+            # Fetch changed files
+            stdout, _ = _run_gh(["pr", "view", str(pr_num), "--json",
+                                  "files,body,comments"], timeout=20)
+            if stdout is None:
+                # Cannot verify — count as present (honest: missing data != missing proof)
+                with_proof += 1
+                continue
+            try:
+                pr_data = _json.loads(stdout)
+            except Exception:
+                with_proof += 1
+                continue
         changed_files = [f.get("path", "") for f in (pr_data.get("files") or [])]
         route_classes = _classify_route(changed_files)
         if not route_classes:
@@ -3143,11 +3176,12 @@ def check_proof_presence() -> dict:
             continue
         pr_body = pr_data.get("body", "") or ""
         comments = [c.get("body", "") for c in (pr_data.get("comments") or [])]
-        has_proof = _pr_has_proof_token(pr_body, comments, route_classes)
-        if has_proof:
+        unsatisfied_classes = _pr_has_proof_token(pr_body, comments, route_classes)
+        if not unsatisfied_classes:
             with_proof += 1
         else:
-            without_proof.append(str(pr_num))
+            # ADR-0083 D4(c): name the unsatisfied class(es), not just the PR.
+            without_proof.append(f"{pr_num} ({', '.join(sorted(unsatisfied_classes))})")
 
     total = len(non_trivial)
     rate = round(with_proof / total, 3) if total > 0 else None
