@@ -163,7 +163,7 @@ def _write_outcome_beacon(beacon_dir, outcome):
         os.makedirs(beacon_dir, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
         line = json.dumps(
-            {"hook": "pre-tool-bash", "status": "OK", "ts": ts, "outcome": outcome},
+            {"hook": "pre-tool-bash", "status": "ok", "ts": ts, "outcome": outcome},
             separators=(",", ":"),
         )
         with open(os.path.join(beacon_dir, "hook-fires.jsonl"), "a", encoding="utf-8") as fh:

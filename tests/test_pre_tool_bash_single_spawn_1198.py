@@ -124,7 +124,7 @@ class Test3bOutcomeBeacon(unittest.TestCase):
             result = _run_hook("git push origin main", tmp)
             self.assertEqual(result.returncode, 0)
             beacons = _beacon_lines(tmp)
-        outcomes = [b.get("outcome") for b in beacons if b.get("status") == "OK"]
+        outcomes = [b.get("outcome") for b in beacons if b.get("status") == "ok"]
         self.assertIn("deny", outcomes, msg=f"expected an outcome=deny beacon, got: {beacons}")
 
     def test_warn_fire_produces_outcome_warn_beacon(self):
@@ -132,7 +132,7 @@ class Test3bOutcomeBeacon(unittest.TestCase):
             result = _run_hook('git commit -m "WIP: something"', tmp)
             self.assertEqual(result.returncode, 0)
             beacons = _beacon_lines(tmp)
-        outcomes = [b.get("outcome") for b in beacons if b.get("status") == "OK"]
+        outcomes = [b.get("outcome") for b in beacons if b.get("status") == "ok"]
         self.assertIn("warn", outcomes, msg=f"expected an outcome=warn beacon, got: {beacons}")
 
     def test_allow_fire_produces_outcome_allow_beacon(self):
@@ -140,19 +140,20 @@ class Test3bOutcomeBeacon(unittest.TestCase):
             result = _run_hook("ls -la", tmp)
             self.assertEqual(result.returncode, 0)
             beacons = _beacon_lines(tmp)
-        outcomes = [b.get("outcome") for b in beacons if b.get("status") == "OK"]
+        outcomes = [b.get("outcome") for b in beacons if b.get("status") == "ok"]
         self.assertIn("allow", outcomes, msg=f"expected an outcome=allow beacon, got: {beacons}")
 
     def test_attempt_beacon_still_precedes_outcome_beacon(self):
-        """HOK-008 preserved: the plain attempt beacon (no `status` key) is
-        still written, and precedes the new outcome-carrying beacon."""
+        """HOK-008/ADR-0083 D1/D2 preserved: the attempt beacon
+        (`status:"attempt"`) is still written first, and precedes the
+        terminal outcome-carrying beacon (`status:"ok"`)."""
         with tempfile.TemporaryDirectory() as tmp:
             result = _run_hook("ls -la", tmp)
             self.assertEqual(result.returncode, 0)
             beacons = _beacon_lines(tmp)
         self.assertGreaterEqual(len(beacons), 2, msg=f"expected attempt + outcome beacons, got: {beacons}")
-        self.assertNotIn("status", beacons[0], msg=f"first beacon must be the plain attempt beacon: {beacons[0]}")
-        self.assertEqual(beacons[1].get("status"), "OK")
+        self.assertEqual(beacons[0].get("status"), "attempt", msg=f"first beacon must be the attempt beacon: {beacons[0]}")
+        self.assertEqual(beacons[1].get("status"), "ok")
         self.assertEqual(beacons[1].get("outcome"), "allow")
 
 

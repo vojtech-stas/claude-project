@@ -20,7 +20,30 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source=lib-root.sh
 source "$SCRIPT_DIR/lib-root.sh"
 
-printf '{"hook":"dashboard-autostart","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+# WORKFLOW_LOG_DIR sandbox seam (mirrors pre-tool-edit.sh / pre-tool-bash.sh):
+# only mkdir when a test harness overrides the beacon directory.
+if [ -n "${WORKFLOW_LOG_DIR:-}" ] && [ ! -d "${WORKFLOW_LOG_DIR}" ]; then
+  mkdir -p "$WORKFLOW_LOG_DIR" 2>/dev/null || true
+fi
+_BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
+
+printf '{"hook":"dashboard-autostart","status":"attempt","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+
+# Terminal-beacon contract (ADR-0083 D1/D2): this script has many exit sites
+# (soft-degrade guards + the idempotency-check branches); a single EXIT trap
+# covers all of them so a future exit site can never regress the fail-loud
+# contract by forgetting to beacon. No gate decision is made here (unlike
+# pre-tool-edit.sh/stop-reviewer-gate.sh) so there is no additive `outcome`
+# field — every terminal path is a plain completion.
+_TERMINAL_EMITTED=0
+_emit_terminal_beacon() {
+  [ "$_TERMINAL_EMITTED" = "1" ] && return 0
+  _TERMINAL_EMITTED=1
+  printf '{"hook":"dashboard-autostart","status":"ok","ts":"%s"}\n' \
+    "$(date -u -Iseconds 2>/dev/null)" \
+    >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+}
+trap _emit_terminal_beacon EXIT
 
 # --- Soft-degrade helpers ---
 warn() { echo "[dashboard-autostart] WARNING: $*" >&2; }

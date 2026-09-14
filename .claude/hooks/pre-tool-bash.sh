@@ -101,7 +101,7 @@ fi
 _BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
 
 # ATTEMPT beacon FIRST — before ANY parsing (HOK-008).
-printf '{"hook":"pre-tool-bash","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+printf '{"hook":"pre-tool-bash","status":"attempt","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 emit_error_beacon() {
   local reason="$1"
