@@ -1,6 +1,6 @@
 # 2026-09-14 — the portability stop lifted, the release batch approved, and a silent-work-loss fix promoted
 
-**Context.** One checkpoint answered three owed decisions, all of them gating each other. The release batch could not move while an escalation held the gate shut; the escalation could not be cleared by the pipeline that raised it, because clearing it *was* the thing it stopped; and a fix for a cleanup route that destroys work without checking had been stuck in the captured tier since June because its own description was wrong. All three were answered as recommended. Applying them surfaced a fourth problem nobody had asked about: the clone's own configuration had gone stale in two places, and one of those was making every queue-discovery surface report a false zero.
+**Context.** One checkpoint answered three owed decisions, all of them gating each other. The release batch could not move while an escalation held the gate shut; the escalation could not be cleared by the pipeline that raised it, because clearing it *was* the thing it stopped; and a fix for a cleanup route that destroys work without checking had been stuck in the captured tier since July because its own description was wrong. All three were answered as recommended. Applying them surfaced a fourth problem nobody had asked about: the clone's own configuration had gone stale in two places, and one of those was making every queue-discovery surface report a false zero.
 
 ## Decisions
 
