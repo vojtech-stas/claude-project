@@ -169,17 +169,22 @@ class TestGenRulesBaseline(unittest.TestCase):
         # slice #1197; ADR-0080's PIP-024 moved it 84 -> 85, slice #1217;
         # ADR-0081's PIP-025 moved it 85 -> 86, slice #1238; ADR-0083's
         # VER-009/VER-010 moved it 86 -> 88, slice #1310; ADR-0085's
-        # PIP-026..PIP-029 moved it 88 -> 92, slice #1329). This test's job
+        # PIP-026..PIP-029 moved it 88 -> 92, slice #1329; ADR-0084's
+        # VER-011/VER-012 moved it 92 -> 94, slice #1402). This test's job
         # is unchanged: confirm slice #1162's own PIP-020/021 rule_ids are
         # still represented in the live baseline, not that the literal number
         # stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 92", self.text)
+        self.assertIn("RULE_IDS_BASELINE: int = 94", self.text)
 
     def test_new_rule_statements_present(self):
         self.assertIn('"PIP-020"', self.text)
         self.assertIn('"PIP-021"', self.text)
         self.assertIn("ADR-0077 D1", self.text)
         self.assertIn("ADR-0077 D2", self.text)
+
+    def test_adr_0084_rule_statements_present(self):
+        self.assertIn('"VER-011"', self.text)
+        self.assertIn('"VER-012"', self.text)
 
 
 class TestAdr0077FileShape(unittest.TestCase):

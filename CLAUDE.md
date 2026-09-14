@@ -104,7 +104,7 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 
 | Thing | Path | Summary |
 |---|---|---|
-| Skills, subagents, tools, key dirs | — | enumerated in `@.claude/generated/_repo-map.md` (generated); read it for behaviour. Facts it truncates, restated here: qa-tester's browser route prefers live Claude-in-Chrome MCP when connected, else headless Playwright fallback (ADR-0074 D1-D5, ADR-0049 D3); codebase-critic's whole-repo mode (ADR-0051); `/ship` = grill → PRD → slices → implement → auto-merge → docs-regen → production-verify. |
+| Skills, subagents, tools, key dirs | — | enumerated in `@.claude/generated/_repo-map.md` (generated); read it for behaviour. Facts it truncates, restated here: qa-tester's browser route prefers live Claude-in-Chrome MCP when connected, else headless Playwright fallback (ADR-0074 D1-D5, ADR-0049 D3 — scope formalized by ADR-0084); codebase-critic's whole-repo mode (ADR-0051); `/ship` = grill → PRD → slices → implement → auto-merge → docs-regen → production-verify. |
 | Settings + Claude Code hooks | `.claude/settings.json`, `.claude/hooks/` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); canonical logger `log-tool-event.sh` |
 | Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | v2 JSONL workflow events per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
 | Pipeline trace ledger | `.claude/logs/trace-v3.jsonl` (gitignored) | canonical v3 spans. `tools/trace.py` appends + queries (`path --pr <n>`); `dashboard/tracestore.py` folds a disposable SQLite read-model — refoldable from the log, never a second source of truth. Closed kind enum: an unknown kind hard-errors. [ADR-0075](decisions/0075-trace-core-fork-decisions.md) D2/D3 |

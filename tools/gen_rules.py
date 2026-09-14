@@ -144,9 +144,14 @@ SCOPE_PATHS: dict[str, str] = {
 # ADR-0083 delta is +2 (VER-009, VER-010) with nothing removed.
 # ADR-0085 (slice #1329) adds 4 new PIP-* ids (PIP-026..PIP-029) and has
 # `supersedes: []`, so nothing leaves the active set: the delta is +4.
+# ADR-0084 (slice #1402) adds 2 new VER-* ids (VER-011, VER-012); its
+# `supersedes: ["ADR-0049 D3"]` is per-decision partial like ADR-0083's
+# supersession of ADR-0057 D2 above — ADR-0049 is not edited and keeps
+# `superseded_by: []` (immutable), so nothing leaves the active set: the
+# delta is +2.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(29) + REG(3) + SLI(5) + VER(10) = 92
-RULE_IDS_BASELINE: int = 92
+#            ISO(6) + OUT(5) + PIP(29) + REG(3) + SLI(5) + VER(12) = 94
+RULE_IDS_BASELINE: int = 94
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -691,6 +696,21 @@ _RULE_STATEMENTS: dict[str, str] = {
         "union is conjunctive, satisfied only when EVERY class in the union has a matching "
         "token; and a check reporting a miss names the route class that lacked a token "
         "(ADR-0083 D4)."
+    ),
+    # ADR-0084: public-repo portability scrub — D1 (CHECK 25) + D2 (CHECK 26).
+    "VER-011": (
+        "CI CHECK 25 (PORTABILITY-SCRUB) scans every tracked file for Class A (an OS-account "
+        "segment inside a `Users` path) and Class B (a local clone root, drive-letter or "
+        "MSYS/Git-Bash mount-form spelling) machine-local path detail, excluding `qa-proof/**`, "
+        "`decisions/**`, and `tools/portability-allowlist.txt` itself; hazard-documenting prose "
+        "is exempted only via that allowlist, anchored by path plus a literal substring of the "
+        "exempted line, never a line number or a whole-file exemption (ADR-0084 D1)."
+    ),
+    "VER-012": (
+        "CI CHECK 26 (QA-PROOF-SHAPE) requires every tracked file under `qa-proof/` to match "
+        "`qa-proof/<prd-num>/**`, where `<prd-num>` is a bare numeric segment, except a fixed, "
+        "ADR-only-growable grandfather list of nine pre-existing non-conforming files named by "
+        "path (ADR-0084 D2)."
     ),
     # -----------------------------------------------------------------------
     # commits scope (ADR-0001)
