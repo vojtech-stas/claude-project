@@ -21,7 +21,30 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source=lib-root.sh
 source "$SCRIPT_DIR/lib-root.sh"
 
-printf '{"hook":"user-prompt-submit","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+# WORKFLOW_LOG_DIR sandbox seam (mirrors pre-tool-edit.sh / pre-tool-bash.sh):
+# only mkdir when a test harness overrides the beacon directory.
+if [ -n "${WORKFLOW_LOG_DIR:-}" ] && [ ! -d "${WORKFLOW_LOG_DIR}" ]; then
+  mkdir -p "$WORKFLOW_LOG_DIR" 2>/dev/null || true
+fi
+_BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
+
+printf '{"hook":"user-prompt-submit","status":"attempt","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+
+# Terminal-beacon contract (ADR-0083 D1/D2): this script has several exit
+# sites (jq-missing soft-degrade, empty-prompt, already-invoked-pipeline
+# skip, final fallthrough); a single EXIT trap covers all of them so a
+# future exit site can never regress the fail-loud contract by forgetting
+# to beacon. This hook only ever emits an advisory nudge or nothing — it
+# never makes a gate decision — so there is no additive `outcome` field.
+_TERMINAL_EMITTED=0
+_emit_terminal_beacon() {
+  [ "$_TERMINAL_EMITTED" = "1" ] && return 0
+  _TERMINAL_EMITTED=1
+  printf '{"hook":"user-prompt-submit","status":"ok","ts":"%s"}\n' \
+    "$(date -u -Iseconds 2>/dev/null)" \
+    >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+}
+trap _emit_terminal_beacon EXIT
 
 NUDGE='User prompt matches feature-request pattern. If the design isn'\''t settled yet, consider /grill-me before /ship.'
 

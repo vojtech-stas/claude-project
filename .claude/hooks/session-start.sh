@@ -307,7 +307,7 @@ except Exception as exc:
             f.write(json.dumps(reject_obj, separators=(",", ":")) + "\n")
     except Exception:
         pass
-    beacon("error", reason)
+    beacon("ERROR", reason)
 PYEOF
 
 # ---- Emit hookSpecificOutput to stdout ---------------------------------------

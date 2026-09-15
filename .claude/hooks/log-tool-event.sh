@@ -300,7 +300,8 @@ try:
             import shutil as _shutil
             _shutil.move(target_path, archive_path)
             rot_obj = {
-                "ts": ts_now(), "hook": "log-tool-event", "status": "rotation",
+                "ts": ts_now(), "hook": "log-tool-event", "status": "ok",
+                "event": "rotation",
                 "archived": archive_name, "cap_bytes": _ROTATION_CAP_BYTES,
             }
             with open(os.path.join(write_dir, "hook-fires.jsonl"),
@@ -330,7 +331,7 @@ except Exception as exc:
             f.write(json.dumps(reject_obj, separators=(",", ":")) + "\n")
     except Exception:
         pass
-    beacon("error", reason)
+    beacon("ERROR", reason)
 PYEOF
 
 exit 0

@@ -1329,6 +1329,334 @@ fi
 fi  # end python3/git availability check
 
 # ---------------------------------------------------------------------------
+# CHECK 27: closed beacon-status schema across the hook fleet (ADR-0083
+# D1/D2, HOK-008, slice #1312)
+#
+# Every record a hook script appends to hook-fires.jsonl must carry a
+# "status" key drawn from the closed set {attempt, ok, ERROR}, plus exactly
+# one named grandfather (session-start.sh's "python3_selftest" self-test
+# beacon, ADR-0083 D2). This check resolves BOTH direct literal status
+# values (bash printf format strings; python dict literals) AND indirect
+# values reached only through a `beacon(status, reason=None)`-style Python
+# helper's call graph (log-tool-event.sh, session-start.sh) -- it traces
+# each hook-fires.jsonl write site back to its actual literal rather than
+# pattern-matching on the "hook" key alone, so a dict that shares a "hook"
+# key but writes to a DIFFERENT file (the reject_obj construct, which
+# targets workflow-events.rejects.jsonl) is never false-positived.
+#
+# Subject set (ADR-0083 D3 / VER-009 -- a check's subject set is defined,
+# not assumed): every ".claude/hooks/*.sh" AND every ".claude/hooks/*.py",
+# both globbed at run time -- never a single hard-coded filename, so a
+# second .py helper is covered the day it lands, not the day someone
+# remembers to add it here.
+#
+# A hook-fires.jsonl append the bash leg cannot resolve to the recognized
+# printf shape is a LOUD violation, not a silent zero-contribution skip --
+# the "check that cannot redden on its own primary defect class" failure
+# ADR-0083 D2 names explicitly. Known blind spot: this still cannot see a
+# beacon written via a shell builtin/construct with no ">>" token at all
+# (e.g. `exec 3>>file; printf ... >&3`) -- see the CI-check comment on
+# UNRECOGNIZED_APPEND_RE below and the PR's CONCERNS note.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 27: closed beacon-status schema (ADR-0083 D1/D2) ---"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 27 — python3 not available (soft-degrade)"
+else
+python3 - << 'BEACONSCHEMA_PYEOF'
+import ast, glob, os, re, sys
+
+ALLOWED = {"attempt", "ok", "ERROR"}
+GRANDFATHER = {("session-start.sh", "python3_selftest")}
+
+violations = []
+
+# --- bash-side: printf literals that append to hook-fires.jsonl ------------
+PRINTF_RE = re.compile(r"printf\s+'(\{.*?\})\\n'.*>>\s*\"[^\"]*hook-fires\.jsonl\"")
+STATUS_RE = re.compile(r'"status"\s*:\s*"([^"]*)"')
+HOOK_RE = re.compile(r'"hook"\s*:\s*"([^"]*)"')
+# A write site the check can SEE (append-redirects into hook-fires.jsonl) but
+# cannot resolve through PRINTF_RE's recognized shape. Used below to turn a
+# beacon written any other way (double-quoted printf, `echo`, an unquoted
+# path, ...) into a loud violation instead of a silent zero-contribution skip
+# -- the "check that cannot redden on its own primary defect class" failure
+# ADR-0083 D2 names explicitly.
+UNRECOGNIZED_APPEND_RE = re.compile(r">>\s*[\"']?[^\"'\s]*hook-fires\.jsonl")
+
+
+def join_continuations(content):
+    """Join backslash-continued physical lines into logical lines so a printf
+    and its `>>` redirect are matched within ONE statement -- never bleeding
+    forward into an unrelated LATER printf's redirect (a non-greedy DOTALL
+    regex would still scan arbitrarily far forward for the next '>>' across
+    statement boundaries if not confined this way)."""
+    out = []
+    buf = ""
+    start = 1
+    for idx, raw_line in enumerate(content.split("\n"), start=1):
+        line = raw_line.rstrip("\r")
+        if buf == "":
+            start = idx
+        if line.endswith("\\") and not line.endswith("\\\\"):
+            buf += line[:-1] + " "
+        else:
+            buf += line
+            out.append((start, buf))
+            buf = ""
+    if buf:
+        out.append((start, buf))
+    return out
+
+
+hook_files = sorted(glob.glob(".claude/hooks/*.sh"))
+
+for path in hook_files:
+    base = os.path.basename(path)
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    for line_no, logical_line in join_continuations(content):
+        m = PRINTF_RE.search(logical_line)
+        if not m:
+            stripped = logical_line.strip()
+            if (not stripped.startswith("#")
+                    and UNRECOGNIZED_APPEND_RE.search(logical_line)):
+                violations.append(
+                    f"{path}:{line_no} -- logical line appends to hook-fires.jsonl but "
+                    f"does not match the recognized printf '{{...}}\\n' ... >> "
+                    f'"...hook-fires.jsonl" beacon shape (extend CHECK 27\'s PRINTF_RE or '
+                    f"rewrite the emitter in the canonical shape)"
+                )
+            continue
+        literal = m.group(1)
+        status_m = STATUS_RE.search(literal)
+        hook_m = HOOK_RE.search(literal)
+        hookname = hook_m.group(1) if hook_m else "?"
+        if not status_m:
+            violations.append(
+                f'{path}:{line_no} -- beacon for hook={hookname!r} has no "status" key'
+            )
+            continue
+        value = status_m.group(1)
+        if value in ALLOWED or (base, value) in GRANDFATHER:
+            continue
+        violations.append(
+            f"{path}:{line_no} -- beacon for hook={hookname!r} has status={value!r}, "
+            f"outside the closed set {sorted(ALLOWED)} and not the named grandfather"
+        )
+
+# --- python-side: AST-based dict-literal + beacon() call-graph resolution --
+
+
+def find_pyeof_blocks(content):
+    """Extract (start_line, source) for every `<<'PYEOF' ... \\nPYEOF` heredoc
+    block embedded in a bash hook script."""
+    blocks = []
+    lines = content.splitlines()
+    i = 0
+    while i < len(lines):
+        if re.search(r"<<\s*'PYEOF'", lines[i]):
+            start = i + 1
+            body = []
+            j = start
+            while j < len(lines) and lines[j].strip() != "PYEOF":
+                body.append(lines[j])
+                j += 1
+            blocks.append((start + 1, "\n".join(body)))
+            i = j
+        i += 1
+    return blocks
+
+
+def check_python_source(source, filelabel, line_offset, base_filename):
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        violations.append(f"{filelabel} -- python parse error: {exc}")
+        return
+
+    parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def enclosing_function(node):
+        cur = node
+        while cur in parent:
+            cur = parent[cur]
+            if isinstance(cur, ast.FunctionDef):
+                return cur
+        return None
+
+    # Variable resolution is SCOPE-KEYED (function-node-or-None, name) --
+    # two same-named variables in different scopes (e.g. a module-level
+    # `line = json.dumps(event, ...)` alongside a `beacon()`-local
+    # `line = json.dumps(obj, ...)`) must never be conflated.
+    var_dict = {}
+    var_dumps_dict = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            scope_key = enclosing_function(node)
+            val = node.value
+            if isinstance(val, ast.Dict):
+                var_dict[(scope_key, name)] = val
+            elif (isinstance(val, ast.Call) and isinstance(val.func, ast.Attribute)
+                  and val.func.attr == "dumps" and val.args):
+                inner = val.args[0]
+                if isinstance(inner, ast.Dict):
+                    var_dumps_dict[(scope_key, name)] = inner
+                elif isinstance(inner, ast.Name):
+                    resolved = var_dict.get((scope_key, inner.id))
+                    if resolved is not None:
+                        var_dumps_dict[(scope_key, name)] = resolved
+
+    def resolve_write_arg(node, scope_key):
+        if isinstance(node, ast.BinOp):
+            left = resolve_write_arg(node.left, scope_key)
+            return left if left is not None else resolve_write_arg(node.right, scope_key)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "dumps":
+            if node.args:
+                inner = node.args[0]
+                if isinstance(inner, ast.Dict):
+                    return inner
+                if isinstance(inner, ast.Name):
+                    return var_dict.get((scope_key, inner.id))
+            return None
+        if isinstance(node, ast.Name):
+            return var_dumps_dict.get((scope_key, node.id)) or var_dict.get((scope_key, node.id))
+        return None
+
+    def dict_value(d, key):
+        for k, v in zip(d.keys, d.values):
+            if isinstance(k, ast.Constant) and k.value == key:
+                return v
+        return None
+
+    def resolve_status_values(value_node, dict_node):
+        """Direct literal -> [value]. Name-valued (the beacon() helper
+        pattern) -> resolve via call graph: find the enclosing FunctionDef's
+        matching parameter, then every Call elsewhere invoking that function
+        by name, collecting the literal argument at that position/keyword."""
+        if isinstance(value_node, ast.Constant) and isinstance(value_node.value, str):
+            return [value_node.value], False
+        if isinstance(value_node, ast.Name):
+            func = enclosing_function(dict_node)
+            if func is None:
+                return [], True
+            param_name = value_node.id
+            arg_names = [a.arg for a in func.args.args]
+            param_index = arg_names.index(param_name) if param_name in arg_names else None
+            values = []
+            unresolved = False
+            for call in ast.walk(tree):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == func.name:
+                    found = None
+                    if param_index is not None and len(call.args) > param_index:
+                        found = call.args[param_index]
+                    else:
+                        for kw in call.keywords:
+                            if kw.arg == param_name:
+                                found = kw.value
+                    if found is None:
+                        continue
+                    if isinstance(found, ast.Constant) and isinstance(found.value, str):
+                        values.append(found.value)
+                    else:
+                        unresolved = True
+            return values, unresolved
+        return [], True
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.With):
+            continue
+        for item in node.items:
+            call = item.context_expr
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "open"):
+                continue
+            opens_hookfires = False
+            for a in list(call.args) + [kw.value for kw in call.keywords]:
+                if isinstance(a, ast.Constant) and isinstance(a.value, str) and "hook-fires.jsonl" in a.value:
+                    opens_hookfires = True
+                if isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute) and a.func.attr == "join":
+                    for arg2 in a.args:
+                        if isinstance(arg2, ast.Constant) and isinstance(arg2.value, str) and "hook-fires.jsonl" in arg2.value:
+                            opens_hookfires = True
+            if not opens_hookfires:
+                continue
+            var_name = item.optional_vars.id if isinstance(item.optional_vars, ast.Name) else None
+            if not var_name:
+                continue
+            scope_key = enclosing_function(node)
+            for wnode in ast.walk(node):
+                if (isinstance(wnode, ast.Call) and isinstance(wnode.func, ast.Attribute)
+                        and wnode.func.attr == "write" and isinstance(wnode.func.value, ast.Name)
+                        and wnode.func.value.id == var_name):
+                    write_arg = wnode.args[0] if wnode.args else None
+                    dict_lit = resolve_write_arg(write_arg, scope_key) if write_arg is not None else None
+                    line_no = wnode.lineno + line_offset - 1
+                    if dict_lit is None:
+                        violations.append(
+                            f"{filelabel}:{line_no} -- hook-fires.jsonl write() payload could not be "
+                            f"statically resolved to a dict literal (extend CHECK 27 or use a literal "
+                            f"dict / beacon()-style call)"
+                        )
+                        continue
+                    status_val_node = dict_value(dict_lit, "status")
+                    if status_val_node is None:
+                        violations.append(f'{filelabel}:{line_no} -- beacon dict has no "status" key')
+                        continue
+                    values, unresolved = resolve_status_values(status_val_node, dict_lit)
+                    if unresolved:
+                        violations.append(
+                            f'{filelabel}:{line_no} -- beacon "status" value could not be fully '
+                            f"resolved through its call graph (a non-literal argument reaches it)"
+                        )
+                        continue
+                    for v in values:
+                        if v in ALLOWED or (base_filename, v) in GRANDFATHER:
+                            continue
+                        violations.append(
+                            f"{filelabel}:{line_no} -- beacon status={v!r} outside the closed set "
+                            f"{sorted(ALLOWED)} and not the named grandfather"
+                        )
+
+
+# Subject set is DERIVED from the glob, not asserted by a hard-coded single
+# path (ADR-0083 D3 / VER-009: "a check's subject set is defined, not
+# assumed"). D2's Enforcement clause scopes this leg to
+# ".claude/hooks/*.sh" AND ".claude/hooks/*.py" -- glob both the same way so
+# a second .py helper landing tomorrow is covered on day one, not silently
+# under-scored the way the single hard-coded literal was.
+py_files = sorted(glob.glob(".claude/hooks/*.py"))
+for py_path in py_files:
+    with open(py_path, "r", encoding="utf-8") as f:
+        check_python_source(f.read(), py_path, 1, os.path.basename(py_path))
+
+for path in hook_files:
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    for start_line, body in find_pyeof_blocks(content):
+        check_python_source(body, f"{path} (heredoc)", start_line, os.path.basename(path))
+
+if violations:
+    for v in violations[:20]:
+        print(f"FAIL: CHECK 27 — {v}", file=sys.stderr)
+    if len(violations) > 20:
+        print(f"FAIL: CHECK 27 — ... and {len(violations) - 20} more violation(s)", file=sys.stderr)
+    sys.exit(1)
+else:
+    print(
+        f"PASS: CHECK 27 — closed beacon-status schema: {len(hook_files)} hook script(s) "
+        f"+ {len(py_files)} python hook helper(s) conform to the closed status set"
+    )
+    sys.exit(0)
+BEACONSCHEMA_PYEOF
+CHECK27_EXIT=$?
+if [ "$CHECK27_EXIT" -ne 0 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+fi  # end python3 availability check
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

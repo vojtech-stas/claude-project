@@ -31,7 +31,15 @@ What is asserted:
    awaiting its prerequisite codebase-critic pass per PIP-013) plus the
    `STOP_GATE_BYPASS=1` escape (ADR-0083 D5).
 
-4. Rule #21 (fixture discipline): every fire in this module writes to a scratch
+4. `pre-tool-bash.sh` (slice #1312, the third registered gate hook): its
+   deny/warn/allow routes each emit exactly one attempt beacon (bash side)
+   and exactly one terminal beacon (`status:"ok"` + `outcome` in
+   {deny,warn,allow}, written by the companion `pre-tool-bash-classify.py`
+   process into the SAME hook-fires.jsonl) — closing the "three-gate"
+   coverage this module's AC calls for alongside pre-tool-edit.sh and
+   stop-reviewer-gate.sh above.
+
+5. Rule #21 (fixture discipline): every fire in this module writes to a scratch
    `WORKFLOW_LOG_DIR`; the production `.claude/logs/hook-fires.jsonl` must never
    contain this module's synthetic session id.
 
@@ -81,6 +89,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PRE_TOOL_EDIT = REPO_ROOT / ".claude" / "hooks" / "pre-tool-edit.sh"
 STOP_GATE = REPO_ROOT / ".claude" / "hooks" / "stop-reviewer-gate.sh"
+PRE_TOOL_BASH = REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash.sh"
 
 # Synthetic id — must never reach a production data store (CLAUDE.md rule #21).
 FIXTURE_SID = "live-fire-1310-fixture"
@@ -450,6 +459,51 @@ class TestPreToolEditTerminalBeacons(_HookFireMixin, unittest.TestCase):
         proc, beacons = self._fire(PRE_TOOL_EDIT, self._payload(untracked), self.HOOK)
         self.assertEqual(proc.returncode, 0, f"stderr={proc.stderr}")
         self._assert_single_terminal(beacons, "ok", "", "untracked-file")
+
+
+class TestPreToolBashTerminalBeacons(_HookFireMixin, unittest.TestCase):
+    """The third registered gate hook (slice #1312, PRD #1266 AC #3): one
+    attempt beacon + one terminal beacon (status:"ok" + outcome) at each of
+    pre-tool-bash.sh's three real-classifier routes. The attempt beacon is
+    written by pre-tool-bash.sh itself (bash); the terminal beacon is written
+    by the companion pre-tool-bash-classify.py process it single-spawns
+    (ADR-0079 D3 / slice #1198) — both append to the same hook-fires.jsonl.
+    """
+
+    HOOK = "pre-tool-bash"
+
+    def _payload(self, command):
+        return {"tool_input": {"command": command}}
+
+    def test_deny_route_emits_ok_with_outcome_deny(self):
+        self._require_toolchain(["python3"], "deny")
+        proc, beacons = self._fire(
+            PRE_TOOL_BASH, self._payload("git push origin main"), self.HOOK
+        )
+        self.assertEqual(proc.returncode, 0, f"stderr={proc.stderr}")
+        self.assertIn(
+            '"permissionDecision":"deny"', proc.stdout.replace(" ", ""),
+            f"expected a deny decision on stdout, got: {proc.stdout!r}",
+        )
+        terminal = self._assert_single_terminal(beacons, "ok", "deny", "deny-route")
+        self.assertNotEqual(
+            terminal.get("status"), "ERROR",
+            "a deliberate DENY must not be reported as an ERROR (forged crash signature)",
+        )
+
+    def test_warn_route_emits_ok_with_outcome_warn(self):
+        self._require_toolchain(["python3"], "warn")
+        proc, beacons = self._fire(
+            PRE_TOOL_BASH, self._payload('git commit -m "WIP: something"'), self.HOOK
+        )
+        self.assertEqual(proc.returncode, 0, f"stderr={proc.stderr}")
+        self._assert_single_terminal(beacons, "ok", "warn", "warn-route")
+
+    def test_allow_route_emits_ok_with_outcome_allow(self):
+        self._require_toolchain(["python3"], "allow")
+        proc, beacons = self._fire(PRE_TOOL_BASH, self._payload("ls -la"), self.HOOK)
+        self.assertEqual(proc.returncode, 0, f"stderr={proc.stderr}")
+        self._assert_single_terminal(beacons, "ok", "allow", "allow-route")
 
 
 class TestStopReviewerGateDenyBeacon(_HookFireMixin, unittest.TestCase):
