@@ -1343,6 +1343,20 @@ fi  # end python3/git availability check
 # pattern-matching on the "hook" key alone, so a dict that shares a "hook"
 # key but writes to a DIFFERENT file (the reject_obj construct, which
 # targets workflow-events.rejects.jsonl) is never false-positived.
+#
+# Subject set (ADR-0083 D3 / VER-009 -- a check's subject set is defined,
+# not assumed): every ".claude/hooks/*.sh" AND every ".claude/hooks/*.py",
+# both globbed at run time -- never a single hard-coded filename, so a
+# second .py helper is covered the day it lands, not the day someone
+# remembers to add it here.
+#
+# A hook-fires.jsonl append the bash leg cannot resolve to the recognized
+# printf shape is a LOUD violation, not a silent zero-contribution skip --
+# the "check that cannot redden on its own primary defect class" failure
+# ADR-0083 D2 names explicitly. Known blind spot: this still cannot see a
+# beacon written via a shell builtin/construct with no ">>" token at all
+# (e.g. `exec 3>>file; printf ... >&3`) -- see the CI-check comment on
+# UNRECOGNIZED_APPEND_RE below and the PR's CONCERNS note.
 # ---------------------------------------------------------------------------
 echo "--- CHECK 27: closed beacon-status schema (ADR-0083 D1/D2) ---"
 if ! command -v python3 > /dev/null 2>&1; then
@@ -1360,6 +1374,13 @@ violations = []
 PRINTF_RE = re.compile(r"printf\s+'(\{.*?\})\\n'.*>>\s*\"[^\"]*hook-fires\.jsonl\"")
 STATUS_RE = re.compile(r'"status"\s*:\s*"([^"]*)"')
 HOOK_RE = re.compile(r'"hook"\s*:\s*"([^"]*)"')
+# A write site the check can SEE (append-redirects into hook-fires.jsonl) but
+# cannot resolve through PRINTF_RE's recognized shape. Used below to turn a
+# beacon written any other way (double-quoted printf, `echo`, an unquoted
+# path, ...) into a loud violation instead of a silent zero-contribution skip
+# -- the "check that cannot redden on its own primary defect class" failure
+# ADR-0083 D2 names explicitly.
+UNRECOGNIZED_APPEND_RE = re.compile(r">>\s*[\"']?[^\"'\s]*hook-fires\.jsonl")
 
 
 def join_continuations(content):
@@ -1395,6 +1416,15 @@ for path in hook_files:
     for line_no, logical_line in join_continuations(content):
         m = PRINTF_RE.search(logical_line)
         if not m:
+            stripped = logical_line.strip()
+            if (not stripped.startswith("#")
+                    and UNRECOGNIZED_APPEND_RE.search(logical_line)):
+                violations.append(
+                    f"{path}:{line_no} -- logical line appends to hook-fires.jsonl but "
+                    f"does not match the recognized printf '{{...}}\\n' ... >> "
+                    f'"...hook-fires.jsonl" beacon shape (extend CHECK 27\'s PRINTF_RE or '
+                    f"rewrite the emitter in the canonical shape)"
+                )
             continue
         literal = m.group(1)
         status_m = STATUS_RE.search(literal)
@@ -1590,10 +1620,16 @@ def check_python_source(source, filelabel, line_offset, base_filename):
                         )
 
 
-classify_path = ".claude/hooks/pre-tool-bash-classify.py"
-if os.path.exists(classify_path):
-    with open(classify_path, "r", encoding="utf-8") as f:
-        check_python_source(f.read(), classify_path, 1, os.path.basename(classify_path))
+# Subject set is DERIVED from the glob, not asserted by a hard-coded single
+# path (ADR-0083 D3 / VER-009: "a check's subject set is defined, not
+# assumed"). D2's Enforcement clause scopes this leg to
+# ".claude/hooks/*.sh" AND ".claude/hooks/*.py" -- glob both the same way so
+# a second .py helper landing tomorrow is covered on day one, not silently
+# under-scored the way the single hard-coded literal was.
+py_files = sorted(glob.glob(".claude/hooks/*.py"))
+for py_path in py_files:
+    with open(py_path, "r", encoding="utf-8") as f:
+        check_python_source(f.read(), py_path, 1, os.path.basename(py_path))
 
 for path in hook_files:
     with open(path, "r", encoding="utf-8") as f:
@@ -1610,7 +1646,7 @@ if violations:
 else:
     print(
         f"PASS: CHECK 27 — closed beacon-status schema: {len(hook_files)} hook script(s) "
-        f"+ pre-tool-bash-classify.py conform to the closed status set"
+        f"+ {len(py_files)} python hook helper(s) conform to the closed status set"
     )
     sys.exit(0)
 BEACONSCHEMA_PYEOF
