@@ -266,13 +266,13 @@ If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` token
 | Changed-path glob | Proof class | Required proof |
 |---|---|---|
 | `dashboard/**` | **browser** | screenshot (.png/.jpg) + inner_text: excerpt |
-| `.claude/hooks/**`, `.claude/settings.json` | **hook-fire** | happy-path proof (exit= + log:) AND induced-failure beacon pair (ERROR beacon shown firing) |
+| `.claude/hooks/**`, `.claude/settings.json` | **hook-fire** | happy-path proof (a pasted verbatim `ok` beacon line + exit code) AND induced-failure proof (a pasted verbatim `ERROR` beacon line shown firing) |
 | `tools/**`, `.claude/skills/**` | **command-run** | command output excerpt + exit codes |
 | `decisions/**`, `docs/**`, `README.md` | **static** | grep count= |
 | `.github/workflows/**`, `tools/ci-checks.sh` | **command-run + failing-canary** | the command-run proof PLUS a deliberately-failing canary shown to fail before the green run |
 
 **Negative-path escalation rows (ADR-0061 D4):**
-- PRs touching `.claude/hooks/**` or `.claude/settings.json`: require a **happy-path proof AND an induced-failure proof** — the ERROR beacon must be shown firing. A happy-path-only proof is insufficient for hook-fire changes.
+- PRs touching `.claude/hooks/**` or `.claude/settings.json`: require a **happy-path proof AND an induced-failure proof** — the ERROR beacon's verbatim line must be shown firing, not merely described (ADR-0083 D4(a)). A happy-path-only proof is insufficient for hook-fire changes.
 - PRs touching `.github/workflows/**` or `tools/ci-checks.sh`: require a **deliberately-failing canary** shown to fail before the final green run is evidence. A green-only run is not admissible.
 
 **Multi-glob union (ADR-0061 D1):** when a PR touches multiple glob categories, the required proof class is the **union** of all matching classes (not just the highest-priority). Document each matched glob and its required proof in REASON. Example: a PR touching both `dashboard/**` and `.claude/skills/**` requires both a browser screenshot+inner_text AND a command-run output+exit proof.
@@ -520,7 +520,7 @@ REASON: <one sentence -- e.g., "browser gate PASS: renders + 0 console errors + 
 ARTIFACTS: <LIVE path: ROOT-absolute GIF path from gif_creator export (video supersedes screenshot as the rule-#20 browser proof for live runs); HEADLESS path: ROOT-absolute screenshot path (.png); else empty>
 PRODUCTION_VERIFY: PASS | FAIL | PROVISIONAL
 ROUTE: browser | hook-fire | command-run | static-check | command-run+failing-canary
-PROOF: <route-specific: LIVE browser — "gif: <ROOT-absolute-gif-path>, console_errors: <genuine_count> (noise_excluded: <N>), read_page: <text excerpt>"; HEADLESS browser — "inner_text: <text excerpt> [+ screenshot: <ROOT-absolute-path>]" (inner_text always present; screenshot always available; eval supplements only); "exit=0, log: <line>" (hook-fire happy-path); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static); "canary-failed=<excerpt>, exit=0, output: <excerpt>" (command-run+failing-canary)>
+PROOF: <route-specific: LIVE browser — "gif: <ROOT-absolute-gif-path>, console_errors: <genuine_count> (noise_excluded: <N>), read_page: <text excerpt>"; HEADLESS browser — "inner_text: <text excerpt> [+ screenshot: <ROOT-absolute-path>]" (inner_text always present; screenshot always available; eval supplements only); 'log: {"hook":"<name>","status":"ok",...}, exit=0' (hook-fire happy-path — `log:` MUST be the pasted verbatim beacon line, not a description of it); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static); "canary-failed=<excerpt>, exit=0, output: <excerpt>" (command-run+failing-canary)>
 ASSERTIONS_CHECKED: <route-specific field list -- see below>
 PROOF_SOURCE: <session_id>@<ts>
 ENV: <sha>@<started_at>
@@ -539,7 +539,7 @@ Validation failures invalidate the proof. Per ADR-0061 D2 (bootstrap-mode: binds
 `ASSERTIONS_CHECKED` is route-specific:
 - **browser (LIVE path):** `renders=<PASS|FAIL|PROVISIONAL>, console_errors=<PASS|FAIL|genuine_count>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — `console_errors` carries either PASS (genuine_count=0) or FAIL (genuine_count≥1) or the raw genuine count; PROVISIONAL appears when the only available proof would be `page.evaluate()` of internal JS state (ADR-0040 D5)
 - **browser (HEADLESS path):** `renders=<PASS|FAIL|PROVISIONAL>, console_clean=<PASS|FAIL>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — PROVISIONAL appears when the only available proof would be `page.evaluate()` of internal JS state; that criterion is returned as a residual, not forced to PASS (ADR-0040 D5)
-- **hook-fire:** `exit_code=<PASS|FAIL>, log_line=<PASS|FAIL|N/A>`
+- **hook-fire:** `exit_code=<PASS|FAIL>, log_line=<PASS|FAIL|N/A>` — `log_line` is PASS only when the reported `log:` value is itself a pasted verbatim beacon line matching `"status":\s*"(ok|ERROR)"`, never a description of one (ADR-0083 D4(a))
 - **command-run:** `exit_code=<PASS|FAIL>, output_assertion=<PASS|FAIL|N/A>`
 - **static-check:** `assertion_1=<PASS|FAIL>[, assertion_2=<PASS|FAIL>, ...]`
 
